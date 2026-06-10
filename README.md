@@ -198,6 +198,71 @@ Phone                          Robot
   |                              |
 ```
 
+## Linux Implementation
+
+### Why BlueZ Management Socket?
+
+The standard approach to BLE advertising on Linux is via BlueZ's D-Bus `LEAdvertisement1` interface. However, this **does not work** with the TP-Link UB500 adapter (RTL8761B chipset) — BlueZ returns "Invalid Parameters (0x0d)" from the HCI layer when trying to register advertisements via D-Bus.
+
+Three approaches were evaluated:
+
+| Approach | Result |
+|----------|--------|
+| BlueZ D-Bus `LEAdvertisement1` | ❌ Fails with "Invalid Parameters" on RTL8761B chipset |
+| Raw HCI socket (`BTPROTO_HCI`) | ❌ Requires `HCI_CHANNEL_USER` (exclusive access, disconnects BlueZ) |
+| BlueZ Management socket (`HCI_CHANNEL_CONTROL`) | ✅ Works — can add/remove advertisements while BlueZ remains active |
+
+The management socket (`mgmt`) talks directly to the kernel's Bluetooth management layer, bypassing bluetoothd's parameter validation that the RTL8761B rejects.
+
+### Keepalive Requirement
+
+The robot treats BLE advertisements as a heartbeat. If it stops receiving packets, it disconnects (LED flashes). The Android app re-advertises every **50ms** — even when idle it sends a "stop" command to maintain the connection. Our implementation uses an async background loop that continuously re-registers the advertisement at the same interval.
+
+### Setup
+
+#### 1. Install dependencies
+
+```bash
+cd /home/mark/git/robotcontrol
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+#### 2. Grant BLE capabilities to Python
+
+Raw HCI/mgmt sockets require `CAP_NET_RAW` and `CAP_NET_ADMIN`:
+
+```bash
+sudo setcap 'cap_net_raw,cap_net_admin+eip' $(readlink -f venv/bin/python3)
+```
+
+#### 3. Install D-Bus policy (optional, for future BlueZ D-Bus use)
+
+```bash
+sudo cp dbus/org.bluez.robot.conf /etc/dbus-1/system.d/
+sudo systemctl reload dbus
+```
+
+### Usage
+
+```bash
+source venv/bin/activate
+
+# Interactive mode
+python3 robot_cli.py -t 99
+
+# One-shot commands
+python3 robot_cli.py forward -t 99 -d 2 -s 3    # forward, 2 seconds, speed 3
+python3 robot_cli.py spin_left -t 99 -d 1 -s 2  # spin left, 1 second, speed 2
+```
+
+### Hardware
+
+- **Bluetooth adapter**: TP-Link UB500 (USB, VID:PID 2357:0604, RTL8761B chipset)
+- **BLE features**: Supports LE advertising (4 instances), central and peripheral roles
+- **Known limitation**: BlueZ D-Bus advertising API fails on this chipset; mgmt socket works
+
 ## Existing Reverse Engineering
 
 No existing reverse engineering efforts for this specific robot/app were found online. This appears to be the first public documentation of this protocol.
@@ -219,7 +284,8 @@ Key decompiled classes (in `apk/decompiled/sources/com/tyb/smartcontrol/`):
 
 ## Next Steps
 
-- [ ] Build a Python/Linux BLE controller using `bleak` or `hcitool`
+- [x] Build a Python/Linux BLE controller
+- [x] Verify protocol works with real robot (type 99 confirmed)
 - [ ] Verify protocol by sniffing actual BLE traffic with nRF Connect
 - [ ] Document Type 98 protocol differences
 - [ ] Test light control values
