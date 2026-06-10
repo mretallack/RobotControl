@@ -78,8 +78,8 @@ class MgmtSocket:
         """Register a BLE advertisement with given AD structures."""
         params = struct.pack("<B", instance)
         params += struct.pack("<I", 1)       # flags: connectable
-        params += struct.pack("<H", 0)       # duration
-        params += struct.pack("<H", 0)       # timeout
+        params += struct.pack("<H", 0)       # duration (0 = indefinite)
+        params += struct.pack("<H", 0)       # timeout (0 = no timeout)
         params += struct.pack("<B", len(adv_data))  # adv_data_len
         params += struct.pack("<B", 0)       # scan_rsp_len
         params += adv_data
@@ -190,13 +190,13 @@ class RobotController:
             self._keepalive_task = None
 
     async def _keepalive_loop(self):
-        """Continuously re-register advertisement every 50ms to keep robot alive."""
+        """Re-register advertisement periodically to prevent adapter timeout."""
         try:
             while True:
                 payload = self._current_payload
                 if payload is not None:
                     self._advertise(payload)
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(2.0)
         except asyncio.CancelledError:
             pass
 
